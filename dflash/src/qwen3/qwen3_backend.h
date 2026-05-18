@@ -92,6 +92,7 @@ public:
                                         const GenerateRequest & req,
                                         const DaemonIO & io) override;
 
+    CompressResult compress(const CompressRequest & req) override;
     bool handle_compress(const std::string & line,
                          const DaemonIO & io) override;
     void free_drafter() override;

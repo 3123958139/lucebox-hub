@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cmath>
+#include <sstream>
 
 namespace dflash27b {
 
@@ -475,6 +476,7 @@ bool Qwen3Backend::do_decode(int committed, int n_gen,
         io.emit(next);
         committed++;
         cache_.cur_pos = committed;
+        if (io.cancelled) break;
 
         // Check EOS
         if (next == 151643 || next == 151645) break;
@@ -524,6 +526,7 @@ bool Qwen3Backend::do_decode(int committed, int n_gen,
 GenerateResult Qwen3Backend::generate(const GenerateRequest & req,
                                        const DaemonIO & io) {
     GenerateResult result;
+    DaemonIO out_io = io.with_token_callback(req.on_token);
     sampler_ = req.sampler;
     if (req.do_sample && sampler_.seed != 0) {
         sampler_rng_.seed(sampler_.seed);
@@ -532,7 +535,7 @@ GenerateResult Qwen3Backend::generate(const GenerateRequest & req,
     cache_.cur_pos = 0;  // reset cache for fresh generation
 
     // Prefill
-    const int committed = do_prefill(req.prompt, io);
+    const int committed = do_prefill(req.prompt, out_io);
     if (committed < 0) {
         result.error = "prefill";
         return result;
@@ -541,7 +544,11 @@ GenerateResult Qwen3Backend::generate(const GenerateRequest & req,
     // Inline snapshot at snap_pos for prefix cache
     if (req.snap_slot >= 0 && req.snap_pos > 0 && req.snap_pos <= committed) {
         cache_.cur_pos = req.snap_pos;
-        snapshot_save(req.snap_slot);
+        if (snapshot_save(req.snap_slot)) {
+            std::printf("[snap] inline slot=%d cur_pos=%d\n",
+                        req.snap_slot, req.snap_pos);
+            std::fflush(stdout);
+        }
         cache_.cur_pos = committed;
     }
 
@@ -600,10 +607,15 @@ GenerateResult Qwen3Backend::generate(const GenerateRequest & req,
             }
         }
         result.tokens.push_back(first);
-        io.emit(first);
+        out_io.emit(first);
+        if (out_io.cancelled) {
+            out_io.emit(-1);
+            result.ok = true;
+            return result;
+        }
 
         if (first == 151643 || first == 151645) {
-            io.emit(-1);
+            out_io.emit(-1);
             result.ok = true;
             return result;
         }
@@ -645,14 +657,14 @@ GenerateResult Qwen3Backend::generate(const GenerateRequest & req,
             cur_committed++;
             cache_.cur_pos = cur_committed;
 
-            if (!do_decode(cur_committed, req.n_gen - 1, result.tokens, io)) {
+            if (!do_decode(cur_committed, req.n_gen - 1, result.tokens, out_io)) {
                 result.error = "decode";
                 return result;
             }
         }
     }
 
-    io.emit(-1);
+    out_io.emit(-1);
     result.ok = true;
     return result;
 }
@@ -663,9 +675,10 @@ GenerateResult Qwen3Backend::restore_and_generate(int slot,
                                                     const GenerateRequest & req,
                                                     const DaemonIO & io) {
     GenerateResult result;
+    DaemonIO out_io = io.with_token_callback(req.on_token);
     if (slot < 0 || slot >= PREFIX_SLOTS || !snapshots_[slot].ctx) {
         result.error = "bad slot";
-        io.emit(-1);
+        out_io.emit(-1);
         return result;
     }
 
@@ -688,7 +701,7 @@ GenerateResult Qwen3Backend::restore_and_generate(int slot,
     if (prefix_len < (int)req.prompt.size()) {
         std::vector<int32_t> remaining(req.prompt.begin() + prefix_len,
                                         req.prompt.end());
-        const int committed = do_prefill(remaining, io, prefix_len);
+        const int committed = do_prefill(remaining, out_io, prefix_len);
         if (committed < 0) {
             result.error = "prefill after restore";
             return result;
@@ -698,6 +711,15 @@ GenerateResult Qwen3Backend::restore_and_generate(int slot,
     // Now generate (decode) from here
     const int total_committed = (int)req.prompt.size();
     cache_.cur_pos = total_committed;
+    if (req.snap_slot >= 0 && req.snap_pos > 0 && req.snap_pos <= total_committed) {
+        cache_.cur_pos = req.snap_pos;
+        if (snapshot_save(req.snap_slot)) {
+            std::printf("[snap] inline slot=%d cur_pos=%d\n",
+                        req.snap_slot, req.snap_pos);
+            std::fflush(stdout);
+        }
+        cache_.cur_pos = total_committed;
+    }
 
     if (req.n_gen > 0) {
         const int hidden = w_.n_embd;
@@ -752,10 +774,15 @@ GenerateResult Qwen3Backend::restore_and_generate(int slot,
             }
         }
         result.tokens.push_back(first);
-        io.emit(first);
+        out_io.emit(first);
+        if (out_io.cancelled) {
+            out_io.emit(-1);
+            result.ok = true;
+            return result;
+        }
 
         if (first == 151643 || first == 151645) {
-            io.emit(-1);
+            out_io.emit(-1);
             result.ok = true;
             return result;
         }
@@ -796,14 +823,14 @@ GenerateResult Qwen3Backend::restore_and_generate(int slot,
             cur_committed++;
             cache_.cur_pos = cur_committed;
 
-            if (!do_decode(cur_committed, req.n_gen - 1, result.tokens, io)) {
+            if (!do_decode(cur_committed, req.n_gen - 1, result.tokens, out_io)) {
                 result.error = "decode";
                 return result;
             }
         }
     }
 
-    io.emit(-1);
+    out_io.emit(-1);
     result.ok = true;
     return result;
 }
@@ -865,26 +892,61 @@ int Qwen3Backend::snapshot_cur_pos(int slot) const {
 
 // ── Compress ───────────────────────────────────────────────────────────
 
-bool Qwen3Backend::handle_compress(const std::string & line, const DaemonIO & io) {
-    char ppath[1024];
-    int  keep_x1000 = 0;
-    char drafter_path[1024];
-    const int n = std::sscanf(line.c_str() + 9, "%1023s %d %1023s",
-                               ppath, &keep_x1000, drafter_path);
-    if (n != 3) {
-        std::fprintf(stderr, "[compress] bad args\n");
-        io.emit(-1);
-        return true;
+ModelBackend::CompressResult Qwen3Backend::compress(const CompressRequest & req) {
+    CompressResult result;
+    if (req.input_ids.empty()) return result;
+
+    const bool was_parked = parked_;
+    if (!req.skip_park && !parked_) park("target");
+
+    if (!drafter_loaded_) {
+        if (!load_drafter(req.drafter_path, 999, drafter_ctx_)) {
+            std::fprintf(stderr, "[compress] load failed: %s\n", dflash27b_last_error());
+            if (!req.skip_park && !was_parked) unpark("target");
+            return result;
+        }
+        drafter_loaded_ = true;
     }
 
-    // Check for "nopark" suffix
-    bool skip_park = (line.find("nopark") != std::string::npos);
+    result.compressed_ids = drafter_score_and_compress(
+        drafter_ctx_, req.input_ids, req.keep_ratio);
+    result.ok = true;
+
+    if (!req.skip_park && !was_parked) unpark("target");
+    return result;
+}
+
+bool Qwen3Backend::handle_compress(const std::string & line, const DaemonIO & io) {
+    std::istringstream iss(line.substr(9));
+    std::string ppath;
+    int  keep_x1000 = 0;
+    std::string drafter_path;
+    if (!(iss >> ppath >> keep_x1000)) {
+        std::fprintf(stderr, "[compress] bad args\n");
+        io.emit(-1);
+        return false;
+    }
+
+    std::getline(iss >> std::ws, drafter_path);
+    bool skip_park = false;
+    const std::string suffix = " nopark";
+    if (drafter_path.size() > suffix.size() &&
+        drafter_path.compare(drafter_path.size() - suffix.size(),
+                             suffix.size(), suffix) == 0) {
+        skip_park = true;
+        drafter_path.resize(drafter_path.size() - suffix.size());
+    }
+    if (drafter_path.empty()) {
+        std::fprintf(stderr, "[compress] bad args\n");
+        io.emit(-1);
+        return false;
+    }
 
     auto src_ids = read_int32_file(ppath);
     if (src_ids.empty()) {
         std::fprintf(stderr, "[compress] empty input\n");
         io.emit(-1);
-        return true;
+        return false;
     }
 
     const bool was_parked = parked_;
@@ -893,8 +955,9 @@ bool Qwen3Backend::handle_compress(const std::string & line, const DaemonIO & io
     if (!drafter_loaded_) {
         if (!load_drafter(drafter_path, 999, drafter_ctx_)) {
             std::fprintf(stderr, "[compress] load failed: %s\n", dflash27b_last_error());
+            if (!skip_park && !was_parked) unpark("target");
             io.emit(-1);
-            return true;
+            return false;
         }
         drafter_loaded_ = true;
     }

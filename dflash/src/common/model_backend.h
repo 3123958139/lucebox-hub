@@ -19,6 +19,10 @@
 
 namespace dflash27b {
 
+// Token callback for streaming generation. Called once per committed token.
+// Return true to continue generation, false to abort.
+using TokenCallback = std::function<bool(int32_t token)>;
+
 // ─── I/O handle passed to backend methods that need protocol output ─────
 struct DaemonIO {
     int stream_fd = -1;
@@ -26,20 +30,19 @@ struct DaemonIO {
     // Optional token callback. When set, emit() calls this for each token
     // (excluding the -1 sentinel). If it returns false, the `cancelled`
     // flag is set and the caller should abort generation.
-    std::function<bool(int32_t)> on_token;
+    TokenCallback on_token;
     mutable bool cancelled = false;
 
     // Write a single int32 to the stream fd (token or -1 sentinel).
     // Also invokes on_token if set. Sets cancelled=true if on_token
     // returns false (client disconnected).
     void emit(int32_t v) const;
+
+    // Return an IO handle that also invokes `cb` for emitted tokens.
+    DaemonIO with_token_callback(const TokenCallback & cb) const;
 };
 
 // ─── Generate request/result ────────────────────────────────────────────
-
-// Token callback for streaming generation. Called once per committed token.
-// Return true to continue generation, false to abort (client disconnect).
-using TokenCallback = std::function<bool(int32_t token)>;
 
 struct GenerateRequest {
     std::vector<int32_t>       prompt;

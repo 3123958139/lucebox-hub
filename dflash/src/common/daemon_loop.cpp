@@ -34,6 +34,7 @@ void DaemonIO::emit(int32_t v) const {
     if (on_token && v >= 0) {
         if (!on_token(v)) {
             cancelled = true;
+            return;
         }
     }
 
@@ -44,6 +45,17 @@ void DaemonIO::emit(int32_t v) const {
 #else
     _write(stream_fd, &v, sizeof(v));
 #endif
+}
+
+DaemonIO DaemonIO::with_token_callback(const TokenCallback & cb) const {
+    DaemonIO out = *this;
+    if (!cb) return out;
+    TokenCallback existing = out.on_token;
+    out.on_token = [existing, cb](int32_t tok) -> bool {
+        if (existing && !existing(tok)) return false;
+        return cb(tok);
+    };
+    return out;
 }
 
 // Default typed compress: delegates to handle_compress via temp file + DaemonIO collector.
@@ -85,7 +97,7 @@ ModelBackend::CompressResult ModelBackend::compress(const CompressRequest & req)
         + std::to_string(keep_x1000) + " " + req.drafter_path;
     if (req.skip_park) cmd += " nopark";
 
-    result.ok = handle_compress(cmd, io);
+    result.ok = handle_compress(cmd, io) && !result.compressed_ids.empty();
     ::unlink(tmp_path);
     return result;
 }

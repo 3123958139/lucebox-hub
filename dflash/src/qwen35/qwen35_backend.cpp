@@ -306,13 +306,14 @@ void Qwen35Backend::shutdown() {
 GenerateResult Qwen35Backend::generate(const GenerateRequest & req,
                                         const DaemonIO & io) {
     GenerateResult result;
+    DaemonIO out_io = io.with_token_callback(req.on_token);
     sampler_ = req.sampler;
     if (req.do_sample && sampler_.seed != 0) {
         sampler_rng_.seed(sampler_.seed);
     }
 
     // Prefill
-    const int committed = do_prefill(req.prompt, io, req.snap_pos, req.snap_slot);
+    const int committed = do_prefill(req.prompt, out_io, req.snap_pos, req.snap_slot);
     if (committed < 0) {
         result.error = "prefill";
         return result;
@@ -320,7 +321,7 @@ GenerateResult Qwen35Backend::generate(const GenerateRequest & req,
 
     // Decode (speculative)
     if (req.n_gen > 0) {
-        if (!do_spec_decode(committed, req.n_gen, result.tokens, io)) {
+        if (!do_spec_decode(committed, req.n_gen, result.tokens, out_io)) {
             result.error = "decode";
             return result;
         }
@@ -336,9 +337,10 @@ GenerateResult Qwen35Backend::restore_and_generate(int slot,
                                                     const GenerateRequest & req,
                                                     const DaemonIO & io) {
     GenerateResult result;
+    DaemonIO out_io = io.with_token_callback(req.on_token);
     if (slot < 0 || slot >= PREFIX_SLOTS || !prefix_snapshots_[slot].ctx) {
         result.error = "bad slot";
-        io.emit(-1);
+        out_io.emit(-1);
         return result;
     }
 
@@ -357,7 +359,7 @@ GenerateResult Qwen35Backend::restore_and_generate(int slot,
     int committed = snap_pos;
     if (!req.prompt.empty()) {
         // The prompt here is the diff (tokens beyond the snapshot)
-        committed = do_prefill(req.prompt, io, req.snap_pos, req.snap_slot);
+        committed = do_prefill(req.prompt, out_io, req.snap_pos, req.snap_slot);
         if (committed < 0) {
             result.error = "prefill";
             return result;
@@ -366,7 +368,7 @@ GenerateResult Qwen35Backend::restore_and_generate(int slot,
 
     // Decode
     if (req.n_gen > 0) {
-        if (!do_spec_decode(committed, req.n_gen, result.tokens, io)) {
+        if (!do_spec_decode(committed, req.n_gen, result.tokens, out_io)) {
             result.error = "decode";
             return result;
         }
@@ -519,8 +521,9 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
             tok = argmax;
             out_tokens.push_back(tok);
             io.emit(tok);
-            if (IS_EOS_TOK(tok, w_)) { io.emit(-1); return true; }
             committed++;
+            if (io.cancelled) { io.emit(-1); return true; }
+            if (IS_EOS_TOK(tok, w_)) { io.emit(-1); return true; }
             continue;
         }
 
@@ -551,6 +554,7 @@ bool Qwen35Backend::do_spec_decode(int committed, int n_gen,
         io.emit(next_tok);
         committed++;
         cache_.cur_pos = committed;
+        if (io.cancelled) break;
 
         if (IS_EOS_TOK(next_tok, w_)) break;
     }

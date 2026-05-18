@@ -1664,17 +1664,13 @@ def _run_bench_suite(
         ttft = result.get("ttft_s")
         ttft_str = f"{ttft:.3f}s" if ttft is not None else "n/a"
         pf_tps = result.get("prefill_tok_s")
-        pf_str = f"{pf_tps:.0f}" if pf_tps is not None else "n/a"
+        pf_str = f"{pf_tps:.2f}" if pf_tps is not None else "n/a"
         out_tok = result.get("completion_tokens", 0)
         out_tps = result.get("output_tok_s")
         out_tps_str = f"{out_tps:.2f}" if out_tps is not None else "n/a"
 
-        bucket_tag = ""
-        if suite == "agent":
-            bucket_tag = f"[{case.get('bucket', '?')}] "
-
         print(
-            f"  {i+1:3d}  {bucket_tag}{case['id']:<16s}  {wall_str:>6s}  {ttft_str:>7s}  "
+            f"  {i+1:3d}  {case['id']:<16s}  {wall_str:>6s}  {ttft_str:>7s}  "
             f"{pf_str:>8s}  {out_tok:>7d}  {out_tps_str:>9s}  {score_detail}",
             flush=True,
         )
@@ -1738,7 +1734,7 @@ def _run_bench_suite(
     if agg.get("mean_ttft_s"):
         print(f"  TTFT={agg['mean_ttft_s']:.3f}s", end="")
     if agg.get("mean_prefill_tok_s"):
-        print(f"  prefill={agg['mean_prefill_tok_s']:.0f} tok/s", end="")
+        print(f"  prefill={agg['mean_prefill_tok_s']:.2f} tok/s", end="")
     if agg.get("mean_output_tok_s"):
         print(f"  output={agg['mean_output_tok_s']:.2f} tok/s", end="")
     if n_scored > 0:
@@ -1796,7 +1792,7 @@ def cmd_bench(args: argparse.Namespace) -> int:
         ok_str = f"{s['n_ok']}/{s['n']}"
         wall_str = f"{s.get('mean_wall_s', 0):.2f}s" if s.get("mean_wall_s") else "-"
         ttft_str = f"{s['mean_ttft_s']:.3f}s" if s.get("mean_ttft_s") else "-"
-        pf_str = f"{s['mean_prefill_tok_s']:.0f}" if s.get("mean_prefill_tok_s") else "-"
+        pf_str = f"{s['mean_prefill_tok_s']:.2f}" if s.get("mean_prefill_tok_s") else "-"
         out_str = f"{s['mean_output_tok_s']:.2f}" if s.get("mean_output_tok_s") else "-"
         tok_str = str(s.get("total_output_tokens", 0))
         score_str = s.get("accuracy", "-")

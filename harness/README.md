@@ -41,6 +41,12 @@ PROMPT_FILE=harness/clients/prompts/repo_inspection.txt harness/clients/run_herm
 CLIENT=opencode harness/clients/run_backend_pair.sh
 ```
 
+Use the native C++ server instead of the Python server:
+
+```bash
+LUCEBOX_SERVER_BACKEND=cpp harness/clients/run_codex.sh
+```
+
 The per-client defaults live in [`clients/README.md`](clients/README.md).
 They are not all the same: a tool-heavy agent prompt and a chat/proxy prompt
 need different context limits on a 24 GB card.

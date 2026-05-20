@@ -67,8 +67,8 @@ bool Gemma4Backend::init() {
                 std::fprintf(stderr, "[gemma4] draft load failed: %s\n", dflash27b_last_error());
                 ggml_backend_free(draft_backend_); draft_backend_ = nullptr;
             } else {
-                // Override mask_token_id for Gemma4 (use token 0 = pad)
-                dw_.mask_token_id = 0;
+                // Override mask_token_id for Gemma4 (token 4 per model card)
+                dw_.mask_token_id = 4;
 
                 // Fix draft dimensions from actual tensor shapes (GGUF metadata is wrong)
                 // fc.weight: [fc_in, draft_hidden]
@@ -124,6 +124,10 @@ bool Gemma4Backend::init() {
                         dflash_target_ = new Gemma4DFlashTarget(w_, cache_, backend_);
                         std::printf("[gemma4] spec-decode ready: capture_layers=%d mirror_cap=%d\n",
                                     n_capture, mirror_cap);
+                        std::printf("[gemma4] capture_layer_ids:");
+                        for (int k = 0; k < (int)cache_.capture_layer_ids.size(); k++)
+                            std::printf(" %d", cache_.capture_layer_ids[k]);
+                        std::printf("\n");
                     }
                 }
             }
@@ -360,6 +364,7 @@ bool Gemma4Backend::do_spec_decode(int committed, int n_gen,
             step_graph_destroy(draft_sg);
             return false;
         }
+
         ggml_backend_tensor_set(draft_sg.inp_embed, noise_embed.data(), 0,
                                 sizeof(float) * noise_embed.size());
         pos_k.resize((size_t)draft_ctx + q_len);

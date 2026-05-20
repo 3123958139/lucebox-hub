@@ -123,12 +123,9 @@ bool Gemma4DFlashTarget::is_eos(int token) const {
 
 bool Gemma4DFlashTarget::embed_tokens(const int32_t * tokens, int n,
                                        float * out) const {
-    if (!w_.embedder.embed(tokens, n, out)) return false;
-    // Gemma4 scales embeddings by sqrt(n_embd)
-    const float scale = std::sqrt((float)w_.n_embd);
-    const size_t total = (size_t)n * w_.n_embd;
-    for (size_t i = 0; i < total; ++i) out[i] *= scale;
-    return true;
+    // Return raw embeddings (no sqrt(n_embd) scale) — the draft model
+    // was trained on unscaled embeddings, matching the qwen35 convention.
+    return w_.embedder.embed(tokens, n, out);
 }
 
 bool Gemma4DFlashTarget::project_hidden_to_tokens(
@@ -139,8 +136,8 @@ bool Gemma4DFlashTarget::project_hidden_to_tokens(
 }
 
 int Gemma4DFlashTarget::mask_token_id() const {
-    // Gemma4 uses token ID 0 as padding/mask
-    return 0;
+    // Gemma4 DFlash draft uses token ID 4 as mask (per model card)
+    return 4;
 }
 
 const std::vector<int> & Gemma4DFlashTarget::capture_layer_ids() const {

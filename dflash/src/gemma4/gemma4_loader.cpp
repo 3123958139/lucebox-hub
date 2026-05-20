@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -461,12 +462,13 @@ bool create_gemma4_target_feat(ggml_backend_t backend, Gemma4Cache & cache,
     cache.target_feat_cap = cap;
     cache.n_capture_layers = n_capture_layers;
 
-    // Compute capture layer IDs (evenly spaced across layers)
+    // Compute capture layer IDs using floating-point linspace with rounding.
+    // This matches the training config (e.g., gemma4: [1,12,23,35,46,57]).
     cache.capture_layer_ids.resize(n_capture_layers);
     const int n_layer = cache.n_layer;
-    const int step = std::max(1, (n_layer - 2) / (n_capture_layers - 1));
     for (int k = 0; k < n_capture_layers; k++) {
-        cache.capture_layer_ids[k] = 1 + k * step;
+        cache.capture_layer_ids[k] = (int)std::round(
+            1.0 + k * (double)(n_layer - 4) / (n_capture_layers - 1));
     }
 
     return true;

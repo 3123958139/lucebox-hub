@@ -32,9 +32,9 @@ python3 "$CONVERT" --mtp-assistant "$SAFETENSORS_DIR" "$OUT_GGUF"
 # --- Assertion 1: tensor list parity ---
 echo "[assert 1] tensor list matches gold"
 python3 "$ROOT/dflash/deps/llama.cpp/gguf-py/scripts/gguf_dump.py" \
-    --no-tensors "$GOLD_GGUF" 2>&1 | grep -E '^\s+\d+:\s+' | awk '{print $NF}' | sort > /tmp/gold_tensors.txt
+    --no-tensors "$GOLD_GGUF" 2>&1 | grep -E '^\s+[0-9]+:\s+' | awk '{print $NF}' | sort > /tmp/gold_tensors.txt
 python3 "$ROOT/dflash/deps/llama.cpp/gguf-py/scripts/gguf_dump.py" \
-    --no-tensors "$OUT_GGUF" 2>&1 | grep -E '^\s+\d+:\s+' | awk '{print $NF}' | sort > /tmp/ours_tensors.txt
+    --no-tensors "$OUT_GGUF" 2>&1 | grep -E '^\s+[0-9]+:\s+' | awk '{print $NF}' | sort > /tmp/ours_tensors.txt
 diff /tmp/gold_tensors.txt /tmp/ours_tensors.txt
 echo "[assert 1] PASS"
 
@@ -76,8 +76,9 @@ echo "[assert 3] PASS"
 
 # --- Assertion 4: requires_target_arch == "gemma4" (vLLM #41789 guard) ---
 echo "[assert 4] requires_target_arch == gemma4"
-echo "$OURS_META" | grep "gemma4_assistant.requires_target_arch" | grep -q "gemma4" \
-    || { echo "FAIL: target arch mismatch"; exit 1; }
+arch_val=$(echo "$OURS_META" | grep "gemma4_assistant.requires_target_arch" | awk -F'"' '{print $2}')
+[ "$arch_val" = "gemma4" ] \
+    || { echo "FAIL: target arch mismatch (got '$arch_val', want 'gemma4')"; exit 1; }
 echo "[assert 4] PASS"
 
 echo "[red→green] all 4 assertions PASS — Phase 1 GREEN"

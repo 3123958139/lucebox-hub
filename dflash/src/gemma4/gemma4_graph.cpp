@@ -960,7 +960,12 @@ bool gemma4_prefill_bsa(
             return false;
         }
         ggml_backend_tensor_set(tok, token_ids, 0, (size_t)S * sizeof(int32_t));
-        ggml_backend_graph_compute(backend, gf);
+        if (ggml_backend_graph_compute(backend, gf) != GGML_STATUS_SUCCESS) {
+            std::fprintf(stderr, "gemma4_prefill_bsa: per-layer embed graph_compute failed\n");
+            ggml_gallocr_free(ga); ggml_free(ctx);
+            g4_free_pers(per_layer_buf); cleanup_all();
+            return false;
+        }
         ggml_gallocr_free(ga);
         ggml_free(ctx);
     }

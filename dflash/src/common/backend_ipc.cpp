@@ -64,8 +64,11 @@ bool BackendIpcProcess::start(const BackendIpcLaunchConfig & cfg) {
         return false;
     }
     if (pid_ == 0) {
-        ::dup2(cmd_pipe[0], STDIN_FILENO);
-        ::close(cmd_pipe[0]);
+        if (cmd_pipe[0] != STDIN_FILENO && ::dup2(cmd_pipe[0], STDIN_FILENO) < 0) {
+            std::fprintf(stderr, "backend-ipc dup2 failed: %s\n", std::strerror(errno));
+            _exit(127);
+        }
+        if (cmd_pipe[0] != STDIN_FILENO) ::close(cmd_pipe[0]);
         ::close(cmd_pipe[1]);
         ::close(stream_pipe[0]);
 
